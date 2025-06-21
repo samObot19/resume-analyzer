@@ -1,0 +1,16 @@
+__pycache__/
+.env
+.venv/
+.vscode/
+uploads/
+env.example
+venv/
+.DS_Store
+.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.development
+.env.test
+.env.production

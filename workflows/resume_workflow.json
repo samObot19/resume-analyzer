@@ -1,0 +1,191 @@
+{
+  "name": "Resume Analyzer Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "resume-upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "resume-upload"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract file path from webhook payload\nconst filePath = $input.first().json.file_path;\nconst originalFilename = $input.first().json.original_filename;\nconst uploadedAt = $input.first().json.uploaded_at;\n\n// Read the PDF file\nconst fs = require('fs');\nconst pdfParse = require('pdf-parse');\n\nlet pdfText = '';\ntry {\n  const dataBuffer = fs.readFileSync(filePath);\n  const data = pdfParse(dataBuffer);\n  pdfText = data.text;\n} catch (error) {\n  throw new Error(`Failed to parse PDF: ${error.message}`);\n}\n\nreturn {\n  json: {\n    pdfText,\n    originalFilename,\n    uploadedAt,\n    filePath\n  }\n};"
+      },
+      "id": "extract-text",
+      "name": "Extract Text from PDF",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "model": "gpt-3.5-turbo",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert resume parser. Extract the following information from the resume text and return it as valid JSON:\n\n- full_name: The person's full name\n- email: Email address\n- phone: Phone number\n- skills: Array of technical skills and competencies\n- experience_years: Total years of experience (as a number)\n- last_job_title: Most recent job title\n\nReturn ONLY the JSON object, no additional text or formatting."
+            },
+            {
+              "role": "user",
+              "content": "=Please analyze this resume and extract the required information:\n\n{{ $json.pdfText }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "openai-analysis",
+      "name": "OpenAI Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI response and prepare for database\nconst openaiResponse = $input.first().json.choices[0].message.content;\n\nlet parsedData;\ntry {\n  // Extract JSON from OpenAI response\n  const jsonMatch = openaiResponse.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsedData = JSON.parse(jsonMatch[0]);\n  } else {\n    parsedData = JSON.parse(openaiResponse);\n  }\n} catch (error) {\n  throw new Error(`Failed to parse OpenAI response: ${error.message}`);\n}\n\n// Prepare data for PostgreSQL\nconst dbData = {\n  filename: $('extract-text').first().json.originalFilename,\n  full_name: parsedData.full_name || '',\n  email: parsedData.email || '',\n  phone: parsedData.phone || '',\n  skills: parsedData.skills || [],\n  experience_years: parsedData.experience_years || 0,\n  last_job_title: parsedData.last_job_title || '',\n  uploaded_at: new Date().toISOString()\n};\n\nreturn {\n  json: dbData\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse OpenAI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "resumes",
+        "columns": {
+          "values": [
+            {
+              "column": "filename",
+              "value": "={{ $json.filename }}"
+            },
+            {
+              "column": "full_name",
+              "value": "={{ $json.full_name }}"
+            },
+            {
+              "column": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "column": "phone",
+              "value": "={{ $json.phone }}"
+            },
+            {
+              "column": "skills",
+              "value": "={{ $json.skills }}"
+            },
+            {
+              "column": "experience_years",
+              "value": "={{ $json.experience_years }}"
+            },
+            {
+              "column": "last_job_title",
+              "value": "={{ $json.last_job_title }}"
+            },
+            {
+              "column": "uploaded_at",
+              "value": "={{ $json.uploaded_at }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "postgres-insert",
+      "name": "Insert to PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Resume processed successfully\",\n  \"data\": {\n    \"filename\": $('parse-response').first().json.filename,\n    \"full_name\": $('parse-response').first().json.full_name,\n    \"email\": $('parse-response').first().json.email,\n    \"skills_count\": $('parse-response').first().json.skills.length,\n    \"experience_years\": $('parse-response').first().json.experience_years,\n    \"last_job_title\": $('parse-response').first().json.last_job_title\n  }\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text from PDF": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse OpenAI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse OpenAI Response": {
+      "main": [
+        [
+          {
+            "node": "Insert to PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert to PostgreSQL": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "resume-analyzer-workflow",
+  "tags": []
+}
