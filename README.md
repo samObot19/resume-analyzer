@@ -35,7 +35,7 @@ This system provides:
 
 ### 1. Clone and Setup
 ```bash
-git clone <repository-url>
+git clone https://github.com/samObot19/resume-analyzer.git
 cd resume-analyzer
 ```
 
