@@ -14,3 +14,5 @@ venv/
 .env.development
 .env.test
 .env.production
+service_account/
+credentials.json

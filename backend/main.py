@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from auth import authenticate_user, create_access_token, get_current_user, Token, User
 from upload import upload_resume
+from google_drive import get_drive_service, GoogleDriveService
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +36,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting up and initializing Google Drive Service...")
+    try:
+        get_drive_service()
+        logger.info("Google Drive Service initialized on startup.")
+    except Exception as e:
+        logger.error(f"Could not initialize Google Drive Service on startup: {e}")
 
 @app.get("/")
 async def root():
@@ -71,21 +81,24 @@ async def login(login_data: LoginRequest):
 @app.post("/upload")
 async def upload_resume_endpoint(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    drive_service: GoogleDriveService = Depends(get_drive_service)
 ):
     """Upload resume endpoint - requires JWT authentication"""
     logger.info(f"Upload request from user: {current_user.username}")
     logger.info(f"File details: {file.filename}, {file.content_type}, {file.size if hasattr(file, 'size') else 'unknown size'}")
     
     try:
-        result = await upload_resume(file)
+        result = await upload_resume(file, drive_service)
         logger.info(f"Upload successful for user: {current_user.username}")
         return result
+    except HTTPException as e:
+        raise e
     except Exception as e:
         logger.error(f"Upload failed for user {current_user.username}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Upload failed: {str(e)}"
+            detail=f"An unexpected error occurred during file upload: {str(e)}"
         )
 
 @app.get("/test-auth")
